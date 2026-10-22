@@ -1,112 +1,123 @@
 #!/usr/bin/env python3
-# Copyright. George Frederick Wagenknecht - 2016
+# Copyright. George Frederick Wagenknecht - 2015/2016/2017
 """
-Artificial Logic Linking System
-Note this program is based upon cognitive system I had designed to deal with
-the brain injury I suffered, (my own design :) ).
-DEV NOTE: REDESIGN STRING LABELS FOR APPROPRIATENESS
+SynthReason - all-in-one
+========================
+One program that combines the three original C++ programs:
 
-Python port of the original C++ source (structure preserved).
+    configurator.cpp -> menu 1  "Configure"            (writes Config.txt)
+    learn.cpp        -> menu 2  "Learn / chat"         (SynthReason v0.2g)
+                        menu 3  "Teach from text file" (the 'load file' command)
+    main.cpp         -> menu 4  "Run 0.9N"             (BiConsciousSymmetricalProcessor)
+
+Typical workflow
+    1. Configure  (once; or just accept the defaults)
+    2. Put words, one per line, into the lexicon files (names.txt, verbs.txt, ...)
+    3. Teach      (reads test.txt and builds knowledgebase.txt)
+    4. Run 0.9N   (uses knowledgebase.txt)
+
+Usage
+    python synthreason_allinone.py                 # menu
+    python synthreason_allinone.py configure
+    python synthreason_allinone.py learn
+    python synthreason_allinone.py teach [file]    # default test.txt
+    python synthreason_allinone.py run [kbfile]    # default knowledgebase.txt
+    python synthreason_allinone.py status
+    add --allow-shell to let the program run shell commands (see README note below)
+
+NOTE: the original programs could pass text to the operating system shell
+(system(...)). That is disabled by default here; start with --allow-shell to
+turn it on.
 """
 
+import argparse
 import os
+import random
 import re
 import sys
-import random
-# import hashlib   # replaces sha512.h (only used in the commented-out serial check)
 
 # ----------------------------------------------------------------------------
-# Globals
+# Settings / globals
 # ----------------------------------------------------------------------------
-CHOICE = False
-D = E = F = ""
-logout = None
-# EE / NE: sha512 integrity hashes in the original. They were only referenced
-# from commented-out code, so they are left empty here.
-EE = ""
-NE = ""
-filename = ""
-k = 0
-wordPrev = ""
-Sout = ""
-space = 0
-NCount = 0
-Argc = 0
-Argv = ""
+ALLOW_SHELL = False
+MATCH_MODE = "substring"        # "line"      = v0.2g exact-line lexicon match
+                                # "substring" = 0.9N substring lexicon match
+CONFIG_FILE = "Config.txt"
+KNOWLEDGEBASE = "knowledgebase.txt"
+LOADFILE_PATH = "test.txt"
+
+# Request descriptors (what the original called desname, desobject, ...)
+DES = {
+    "action": "how", "bridge": "bridge", "command": "command",
+    "concept": "concept", "description": "describe", "emotion": "feel",
+    "name": "who", "number": "count", "object": "what", "place": "where",
+    "reason": "why", "game": "game", "time": "when",
+}
+# Word-category files (what the original called desnameF, desobjectF, ...)
+LEX = {
+    "action": "actions.txt", "bridge": "bridges.txt", "command": "Command.txt",
+    "concept": "concept.txt", "description": "descriptions.txt",
+    "emotion": "emotion.txt", "name": "names.txt", "number": "Numbers.txt",
+    "object": "objects.txt", "place": "places.txt", "reason": "reason.txt",
+    "game": "game.txt", "time": "time.txt",
+}
+# Order in which Config.txt stores them: line 2*i = descriptor, 2*i+1 = filename
+CATEGORIES = ["action", "bridge", "command", "concept", "description",
+              "emotion", "name", "number", "object", "place", "reason",
+              "game", "time"]
+# Order the configurator asks them in (same as the original configurator.cpp)
+CONFIGURATOR_ORDER = ["name", "object", "action", "time", "description",
+                      "number", "reason", "place", "emotion", "command",
+                      "bridge", "game", "concept"]
+# Fixed extra descriptors / files (not configurable in the originals)
+DES_EXTRA = {"adj": "desadj", "adjp": "desadjp", "adv": "desadv",
+             "advtime": "desadvtime", "prep": "desprep",
+             "qualities": "desqualities", "verb": "desverb"}
+FILE_EXTRA = {"adj": "adj.txt", "adjp": "adjpeople.txt", "adv": "adv.txt",
+              "advtime": "advtime.txt", "prep": "prep.txt",
+              "qualities": "qualities.txt", "verb": "verbs.txt",
+              "reply": "reply.txt"}
+
+# engine state
 theanswerreadystatic = ""
 synthreasonword = ""
 synthcom = ""
-autothink = 0
-speedprocessing = 0        # if speed processing is enabled responses
-retain2 = ""
-retain = ""                # are affected
+speedprocessing = 0
 found = 0
-searchset = 1              # what to search for (view code for details)
-markerc1 = 0
-warning = "Warning! points: "
-markerc2 = 0
-markerc3 = 0
+searchset = 1                   # what to search for (view code for details)
+markerc1 = markerc2 = markerc3 = 0
 wordpos = 0
 wordc = 0
 trade = 0
 buy = 0.0
 sell = 0.0
-a = 0                      # swerg
+a = 0
 b = 0
 m = 0
 procnote = 0
-linereq = 0
 synthanswer = ""
-linecount = 0
-finish = 10
 anscount = 0
-ucount = 0
-wordcount = 0
-wordcountstat = 0
+ucount = wordcount = wordcountstat = 0
 fail = 0
 points = 0
 question = 0
-structcount = 0
-thoughtcount = 0
-thought = [""] * 1024      # char thought[1024][512]
-structure = [""] * 1024    # char structure[1024][512]
-testfile = "test.txt"
 lineneeded = ""
-file = ""
-filenamebuf = ""
-word = ""
-userinputA = ""
 textneeded = ""
 notes = ""
+objects = ""
+chainreason = ""
+Sout = ""
 fileone = "fileone.txt"
 filetwo = "filetwo.txt"
-chainreason = ""
-synthlogictemp = ""
-magic1 = ""
-magic2 = ""
-magic3 = ""
-magic4 = ""
-magic5 = ""
-magic6 = ""
-magic7 = ""
-objects = ""
-description = ""
-actions = ""
-desname = desobject = desaction = destime = desdescription = ""
-desnumber = desreason = desplace = desemotion = ""
-descommand = desbridge = desgame = desconcept = ""
-desadj = "desadj"
-desadjp = "desadjp"
-desadv = "desadv"
-desadvtime = "desadvtime"
-desprep = "desprep"
-desqualities = "desqualities"
-desverb = "desverb"
-desnameF = desobjectF = desactionF = destimeF = desdescriptionF = ""
-desnumberF = desreasonF = desplaceF = desemotionF = ""
-descommandF = desbridgeF = desgameF = desconceptF = ""
+thought = [""] * 1024
+structure = [""] * 1024
+sweep = 0
+userinputall = ""
+session_kb = ""
 
-# Scan mode 0 = intelligent. 1 = skim mode
+
+class BackToMenu(Exception):
+    pass
 
 
 # ----------------------------------------------------------------------------
@@ -121,113 +132,126 @@ def substr(s, pos, length=None):
     return s[pos:pos + length]
 
 
-def read_lines(path):
-    """Open a file and return its lines (empty list if it cannot be opened)."""
-    try:
-        with open(path, "r", errors="ignore") as f:
-            return f.read().split("\n")
-    except OSError:
-        return []
-
-
 def leading_int(s):
     """stringstream(s) >> int"""
     mt = re.match(r"\s*([+-]?\d+)", s)
     return int(mt.group(1)) if mt else 0
 
 
+_file_cache = {}
+
+
+def file_data(path):
+    """(lines, joined_text) of a file. Cached until the file changes.
+    Handles Windows (CRLF) line endings; a missing file reads as empty."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return [], ""
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _file_cache.get(path)
+    if hit and hit[0] == key:
+        return hit[1], hit[2]
+    with open(path, "r", errors="ignore") as f:
+        text = f.read()
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    _file_cache[path] = (key, lines, "".join(lines))
+    return lines, "".join(lines)
+
+
+def read_lines(path):
+    return file_data(path)[0]
+
+
+def run_shell(cmd):
+    if ALLOW_SHELL:
+        os.system(cmd)
+    else:
+        print("[shell disabled] would run: " + cmd +
+              "   (start with --allow-shell to enable)")
+
+
+# ----------------------------------------------------------------------------
+# Config  +  Configurator (configurator.cpp)
 # ----------------------------------------------------------------------------
 def Config():
-    global desname, desnameF, desobject, desobjectF, desaction, desactionF
-    global destime, destimeF, desdescription, desdescriptionF
-    global desnumber, desnumberF, desreason, desreasonF, desplace, desplaceF
-    global desemotion, desemotionF, descommand, descommandF
-    global desbridge, desbridgeF, desgame, desgameF, desconcept, desconceptF
-
-    find = -1
-    B = ""
-    # A = <sha512 serial list, unused: serial check is commented out>
-    E = ""
-
-    LINE = 0
-    for setup in read_lines("Config.txt"):
-        if LINE == 12:
-            desname = setup
-        if LINE == 13:
-            desnameF = setup
-        if LINE == 16:
-            desobject = setup
-        if LINE == 17:
-            desobjectF = setup
-        if LINE == 0:
-            desaction = setup
-        if LINE == 1:
-            desactionF = setup
-        if LINE == 24:
-            destime = setup
-        if LINE == 25:
-            destimeF = setup
-        if LINE == 8:
-            desdescription = setup
-        if LINE == 9:
-            desdescriptionF = setup
-        if LINE == 14:
-            desnumber = setup
-        if LINE == 15:
-            desnumberF = setup
-        if LINE == 20:
-            desreason = setup
-        if LINE == 21:
-            desreasonF = setup
-        if LINE == 18:
-            desplace = setup
-        if LINE == 19:
-            desplaceF = setup
-        if LINE == 10:
-            desemotion = setup
-        if LINE == 11:
-            desemotionF = setup
-        if LINE == 4:
-            descommand = setup
-        if LINE == 5:
-            descommandF = setup
-        if LINE == 2:
-            desbridge = setup
-        if LINE == 3:
-            desbridgeF = setup
-        if LINE == 22:
-            desgame = setup
-        if LINE == 23:
-            desgameF = setup
-        if LINE == 6:
-            desconcept = setup
-        if LINE == 7:
-            desconceptF = setup
-        if LINE == 26:
-            # C = sha512(setup)
-            # find = A.find(C)
-            pass
-        LINE += 1
+    """Load Config.txt (written by Configurator). Returns True if it existed."""
+    if not os.path.isfile(CONFIG_FILE):
+        return False
+    lines = read_lines(CONFIG_FILE)
+    for i, cat in enumerate(CATEGORIES):
+        if 2 * i < len(lines) and lines[2 * i].strip():
+            DES[cat] = lines[2 * i].strip()
+        if 2 * i + 1 < len(lines) and lines[2 * i + 1].strip():
+            LEX[cat] = lines[2 * i + 1].strip()
     print("Config file loaded.\n")
-
-    while find != -1:
-        if find > -1:
-            return
-        if find == -1:
-            # print("Please enter your serial code:")
-            # B = input()
-            # C = sha512(B)
-            # find = A.find(C)
-            if find == -1:
-                print("\nIncorrect Serial code")
-            if find > -1:
-                print("Thankyou!")
-                with open("Config.txt", "a") as f:
-                    f.write(B)
-                return
-    return
+    return True
 
 
+def Configurator():
+    print("Configure request descriptors & Word catagories")
+    print("(press Enter to keep the value shown in [brackets])\n")
+    for n, cat in enumerate(CONFIGURATOR_ORDER, 1):
+        d = input("#%d Vocabulary Descriptor [%s]:" % (n, DES[cat])).strip()
+        f = input("#%d Filename [%s]:" % (n, LEX[cat])).strip()
+        if d:
+            DES[cat] = d
+        if f:
+            LEX[cat] = f
+
+    with open(CONFIG_FILE, "w") as fh:
+        fh.write("\n".join(DES[c] + "\n" + LEX[c] for c in CATEGORIES))
+
+    # create the category files (existing files are NOT wiped)
+    for cat in CATEGORIES:
+        if not os.path.exists(LEX[cat]):
+            open(LEX[cat], "w").close()
+    ensure_data_files(quiet=True)
+    print("Complete!")
+
+
+# ----------------------------------------------------------------------------
+# Data file helpers
+# ----------------------------------------------------------------------------
+def lexicon_files():
+    """All word-category files the engine looks at."""
+    files = [LEX[c] for c in CATEGORIES if c != "game"]
+    files += [FILE_EXTRA[k] for k in ("adj", "adjp", "adv", "advtime",
+                                      "prep", "qualities", "verb", "reply")]
+    return files
+
+
+def ensure_data_files(quiet=False):
+    made = []
+    for f in lexicon_files():
+        if not os.path.exists(f):
+            open(f, "w").close()
+            made.append(f)
+    if made and not quiet:
+        print("Created empty word files: " + ", ".join(made))
+    return made
+
+
+def status():
+    print("\nData files (words, one per line):")
+    empty = 0
+    for f in lexicon_files():
+        n = sum(1 for l in read_lines(f) if l.strip())
+        empty += (n == 0)
+        print("  %-18s %s" % (f, "%d words" % n if n else "EMPTY"))
+    for f in (LOADFILE_PATH, KNOWLEDGEBASE, "response.txt", "skim.txt",
+              "ginsight.txt", "self.txt"):
+        print("  %-18s %s" % (f, "%d bytes" % os.path.getsize(f)
+                              if os.path.isfile(f) else "(missing)"))
+    if empty:
+        print("\n%d word files are empty, so nothing can be recognised yet. "
+              "Add words (one per line) to them." % empty)
+    print()
+
+
+# ----------------------------------------------------------------------------
+# Engine (learn.cpp / main.cpp)
+# ----------------------------------------------------------------------------
 def loadfile(file):
     global textneeded
 
@@ -244,66 +268,26 @@ def loadfile(file):
 
 
 def filesearch(segment, file):
-    global filenamebuf, k, NCount, space
-
-    filenamebuf = file
-    if k == 0:
-        # Sout = ""
-        pass
-    line = ""
-    linefull = ""
-    pos = -1
-    exists = 0
-
-    wordblock = ""
-    for line in read_lines(file):
-        linefull += line
-
-    if linefull.find(segment) != -1:   # speedhack
-        pos = 1
-        # print(" conceptual scan:" + segment)
-
-    if pos == 1:
-        k += 1
-        NCount += 1
-        exists = 1
-    if pos == -1:
-        space += 1
-        exists = 0
-    line = ""
-
-    if k == 4:
-        # Sout += " <-PatternSpace: " + str(space) + " <-Bytes: " + str(NCount)
-        space = 0
-        k = 0
-    return exists
+    lines, joined = file_data(file)
+    if MATCH_MODE == "line":                 # v0.2g: whole-line match
+        return 1 if segment in lines else 0
+    return 1 if joined.find(segment) != -1 else 0   # 0.9N: substring ("speedhack")
 
 
 def processlogic(answerstringsegment):
-    # linear progression
-    # 0 = null, 1 = right, 2 = left, 3 = cross transition
-    # 3D progression.
-    # 4 = null, 5 = x+, 6 = x-, 8 = y+, 9 = y-, 10 = z+, 11 = z-
-    # 4D progression
-    # 12 = null, 13 = time +, 14 = time -
-
+    # linear progression: 0 null, 1 right, 2 left, 3 cross transition
+    # 3D: 4 null, 5 x+, 6 x-, 8 y+, 9 y-, 10 z+, 11 z-
+    # 4D: 12 null, 13 time+, 14 time-
     progression = 0
-    foo = ""    # (C++: string foo = 0)
-
-    # testcode
+    foo = ""
     if answerstringsegment.find("are") > 0:
-        # progression indicator keyword DB or inet lookup
         progression = 1
-    # testcode
     if answerstringsegment.find("aren't") > 0:
-        # progression indicator keyword DB or inet lookup
         progression = 1
-    # cross domain transfer
     return foo
 
 
 # MCM (deep learning component) needs processlogic to work!
-# algebraic logical processing buffer
 def processresponselogic():
     global fail
     fail = 0
@@ -312,7 +296,7 @@ def processresponselogic():
 
 def processresponsealgbraic(answerstring, userinput):
     global ucount, wordcount, wordcountstat, synthanswer, synthreasonword
-    global theanswerreadystatic, Sout, fail
+    global theanswerreadystatic, fail, Sout
 
     answerstringsegment = ""
     theanswer = ""
@@ -330,6 +314,16 @@ def processresponsealgbraic(answerstring, userinput):
             break
     ucount -= 1
 
+    # lexicon files, in the original order
+    wordcheck_files = [LEX["command"], LEX["bridge"], LEX["concept"],
+                       LEX["object"], FILE_EXTRA["reply"], LEX["name"],
+                       LEX["reason"], LEX["time"], LEX["place"],
+                       LEX["emotion"], LEX["action"], LEX["description"],
+                       LEX["number"], FILE_EXTRA["adj"], FILE_EXTRA["adjp"],
+                       FILE_EXTRA["adv"], FILE_EXTRA["advtime"],
+                       FILE_EXTRA["prep"], FILE_EXTRA["qualities"],
+                       FILE_EXTRA["verb"]]
+
     segmentstart = 0
     segmentend = 0
     while 0 <= segmentend < len(answerstring) - 1:
@@ -343,20 +337,17 @@ def processresponsealgbraic(answerstring, userinput):
                                          segmentend - segmentstart + 1)
         pos = 0
         posend = 0
-        lineend = 0
-        lineend = userinput.find(":", lineend + 1)
+        lineend = userinput.find(":", 1)
         while posend != lineend - 1:
             posend = userinput.find(" ", pos + 1)
             word = substr(userinput, pos, posend - pos)
             pos = posend
             if pos == -1:      # guard (C++ would run off the end of the string)
                 break
-            clip = word.find(" ")
-            if clip == 0:
+            if word.find(" ") == 0:
                 word = word[1:]
 
             wordcheck2 = 0
-            deviseanswerlimit = answerstringsegment.find(":", wordcheck2)
             while 0 <= wordcheck2 < len(answerstringsegment) - 2:
                 wordcheck2 = answerstringsegment.find(word, wordcheck2 + 1)
                 if wordcheck2 == -1:
@@ -366,58 +357,33 @@ def processresponsealgbraic(answerstring, userinput):
                 if deviseanswerpos > -1 and deviseanswerlimit > -1:
                     if deviseanswerlimit > deviseanswerpos:
                         theanswer = answerstringsegment[deviseanswerpos + 1:deviseanswerlimit]
-                        notexist = userinput.find(theanswer)
-                        if notexist == -1:
+                        if userinput.find(theanswer) == -1:
                             theanswerready = theanswer + " "
             wordcheck = 0
 
             if trade == 0:
-                # wordcheck += filesearch(word, "self.txt")
-                wordcheck += filesearch(word, "Command.txt")
-                wordcheck += filesearch(word, "bridges.txt")
-                wordcheck += filesearch(word, "concept.txt")
-                wordcheck += filesearch(word, "objects.txt")
-                wordcheck += filesearch(word, "reply.txt")
-                wordcheck += filesearch(word, "names.txt")
-                wordcheck += filesearch(word, "reason.txt")
-                wordcheck += filesearch(word, "time.txt")
-                wordcheck += filesearch(word, "places.txt")
-                wordcheck += filesearch(word, "emotion.txt")
-                wordcheck += filesearch(word, "actions.txt")
-
-                wordcheck += filesearch(word, "descriptions.txt")
-
-                wordcheck += filesearch(word, "Numbers.txt")
-                wordcheck += filesearch(word, "adj.txt")
-                wordcheck += filesearch(word, "adjpeople.txt")
-                wordcheck += filesearch(word, "adv.txt")
-                wordcheck += filesearch(word, "advtime.txt")
-                wordcheck += filesearch(word, "prep.txt")
-                wordcheck += filesearch(word, "qualities.txt")
-                wordcheck += filesearch(word, "verbs.txt")
-                # get time .
-                # get reverse descriptors
-                synthcom = ""
+                for f in wordcheck_files:
+                    wordcheck += filesearch(word, f)
                 # get word des match
                 synthanswer = ""
                 if userinput.find("?") == -1:
-                    if filesearch(word, "places.txt") == 1:
-                        synthanswer = desplace + " is the " + word + "?"
+                    if filesearch(word, LEX["place"]) == 1:
+                        synthanswer = DES["place"] + " is the " + word + "?"
                         synthreasonword = word
-                    if filesearch(word, "objects.txt") == 1:
-                        synthanswer = desobject + " is " + word + "?"
+                    if filesearch(word, LEX["object"]) == 1:
+                        synthanswer = DES["object"] + " is " + word + "?"
                         synthreasonword = word
-                    if filesearch(word, "actions.txt") == 1:
-                        synthanswer = desaction + " does one " + word + "?"
+                    if filesearch(word, LEX["action"]) == 1:
+                        synthanswer = DES["action"] + " does one " + word + "?"
                         synthreasonword = word
-                    if filesearch(word, "descriptions.txt") == 1:
-                        synthanswer = desdescription + " a " + word + "?"
+                    if filesearch(word, LEX["description"]) == 1:
+                        synthanswer = DES["description"] + " a " + word + "?"
                         synthreasonword = word
-                    if filesearch(word, "reason.txt") == 1:
-                        synthanswer = desreason + " does one " + word + "?"
+                    if filesearch(word, LEX["reason"]) == 1:
+                        synthanswer = DES["reason"] + " does one " + word + "?"
                         synthreasonword = word
-                    if filesearch(word, "names.txt") == 1:
-                        synthanswer = desobject + " does " + word + " do" + "?"
+                    if filesearch(word, LEX["name"]) == 1:
+                        synthanswer = DES["object"] + " does " + word + " do" + "?"
                         synthreasonword = word
 
                 if wordcheck > 0:
@@ -425,8 +391,7 @@ def processresponsealgbraic(answerstring, userinput):
                 if question > -1:
                     if wordcheck > 0:
                         wordcount += 1
-                        check = answerstringsegment.find(word)
-                        if check > -1:
+                        if answerstringsegment.find(word) > -1:
                             completion += 1
 
         if answered == 0 or answered == 1:
@@ -437,8 +402,7 @@ def processresponsealgbraic(answerstring, userinput):
                 Sout += "->" + theanswerready
             if completion != wordcount and wordcount > 0:
                 fail = 1
-                # logic (todo)
-                # foo = processlogic(answerstringsegment)
+                # logic (todo): foo = processlogic(answerstringsegment)
 
     return theanswerreadyreal
 
@@ -446,24 +410,16 @@ def processresponsealgbraic(answerstring, userinput):
 def processlanguage(userinput):
     global markerc1, markerc2, markerc3, anscount, question
     global wordpos, wordc, buy, sell, found, notes
-    global magic3, description
 
     answerstring = ""
-
-    markerc1 = 0
-    markerc2 = 0
-    markerc3 = 0
+    markerc1 = markerc2 = markerc3 = 0
     pos = 0
     posend = 0
-    lineend = 0
-    exists = 1
     anscount = 0
-    userinputstack = ""
-    userinputstack = userinputstack + userinput
 
     question = userinput.find("?")
     if question == -1:
-        lineend = userinput.find(":", lineend + 1)
+        lineend = userinput.find(":", 1)
         answerstring = answerstring + "[:"
         while posend != lineend - 1:
             posend = userinput.find(" ", pos + 1)
@@ -471,11 +427,8 @@ def processlanguage(userinput):
             pos = posend
             if pos == -1:      # guard (C++ would run off the end of the string)
                 break
-            clip = word.find(" ")
-            if clip == 0:
+            if word.find(" ") == 0:
                 word = word[1:]
-
-            # hardcode md5 / filter.txt check (disabled in original)
 
             if trade == 1:
                 if searchset == 0:
@@ -484,7 +437,6 @@ def processlanguage(userinput):
                         wordc = 0
                         while wordpos != -1:
                             wordpos = line.find(" ", wordpos + 1)
-                            # wordc += 1
                         getmatch = line.find(word)
                         if getmatch > -1 and word not in ("a", "in", "or", "by"):
                             markerc1 += 1
@@ -516,502 +468,508 @@ def processlanguage(userinput):
                             if markerc3 == wordc:
                                 found += 1
                                 notes += userinput + ":"
-                                # notes, get sentence
 
             if trade == 0:
-                # (the original repeats one block per lexicon file; same order here)
+                # one block per word category, same order as the originals
                 lexicons = [
-                    ("Command.txt",     descommand),
-                    ("concept.txt",     desconcept),
-                    ("bridges.txt",     desbridge),
-                    ("Numbers.txt",     desnumber),
-                    ("names.txt",       desname),
-                    ("time.txt",        destime),
-                    ("reason.txt",      desreason),
-                    ("places.txt",      desplace),
-                    ("emotion.txt",     desemotion),
-                    ("actions.txt",     desaction),
-                    ("descriptions.txt", desdescription),
-                    ("objects.txt",     desobject),
-                    ("adj.txt",         desadj),
-                    ("adjpeople.txt",   desadjp),
-                    ("adv.txt",         desadv),
-                    ("advtime.txt",     desadvtime),
-                    ("prep.txt",        desprep),
-                    ("qualities.txt",   desqualities),
-                    ("verbs.txt",       desverb),
+                    (LEX["command"],         DES["command"]),
+                    (LEX["concept"],         DES["concept"]),
+                    (LEX["bridge"],          DES["bridge"]),
+                    (LEX["number"],          DES["number"]),
+                    (LEX["name"],            DES["name"]),
+                    (LEX["time"],            DES["time"]),
+                    (LEX["reason"],          DES["reason"]),
+                    (LEX["place"],           DES["place"]),
+                    (LEX["emotion"],         DES["emotion"]),
+                    (LEX["action"],          DES["action"]),
+                    (LEX["description"],     DES["description"]),
+                    (LEX["object"],          DES["object"]),
+                    (FILE_EXTRA["adj"],      DES_EXTRA["adj"]),
+                    (FILE_EXTRA["adjp"],     DES_EXTRA["adjp"]),
+                    (FILE_EXTRA["adv"],      DES_EXTRA["adv"]),
+                    (FILE_EXTRA["advtime"],  DES_EXTRA["advtime"]),
+                    (FILE_EXTRA["prep"],     DES_EXTRA["prep"]),
+                    (FILE_EXTRA["qualities"], DES_EXTRA["qualities"]),
+                    (FILE_EXTRA["verb"],     DES_EXTRA["verb"]),
                 ]
                 for lexfile, requestdescriptors in lexicons:
-                    exists = 0
-                    exists = filesearch(word, lexfile)
-                    if exists == 1:
-                        if lexfile == "actions.txt":
-                            magic3 = word
-                        if lexfile in ("descriptions.txt", "objects.txt"):
-                            description = word
+                    if filesearch(word, lexfile) == 1:
                         answerstring = answerstring + requestdescriptors + ">" + word + ":"
                         anscount += 1
-            word = ""
         answerstring += "]"
     return answerstring
 
 
-# processsentence
 # NOTE: SYNTAXEXTRACTOR, GETPREPOSITION, DATAACTIVATOR, RESPONSEINITPROCESSOR
-# and SYNTAXBRANCHER are commented out in the original source and therefore
-# omitted from this port.
+# and SYNTAXBRANCHER are commented out in the original sources and omitted.
 
 
-def processKnowledge(userinput, knowledgebase):  # add select knowledgebase
-    global desnumber, desobject, destime, desdescription, desreason, desplace
-    global desemotion, desaction, descommand, desbridge, desconcept
-    global ucount, wordcountstat, speedprocessing, trade, sweep_dummy
-    global a, b, m, procnote, notes, chainreason, objects, synthcom
-    global buy, sell, found, question, fail
+def processKnowledge(userinput, knowledgebase, interactive=False):
+    """One pass of the original processKnowledge (0.9N) / main loop (v0.2g).
+    interactive=True adds the v0.2g behaviour: USER: prompt, NLP.txt output,
+    echo, optional shell command and the [answer] print."""
+    global ucount, wordcountstat, speedprocessing, trade, a, b, m, procnote
+    global notes, textneeded, lineneeded, chainreason, objects, synthcom
+    global question, sweep, userinputall, session_kb
 
-    userinputall = ""
-    answerstring = ""
     theanswerready = ""
-    sweep = 0
-    n = 0
-    desnumber = "count"
-    desobject = "what"
-    destime = "when"
-    desdescription = "describe"
-    desreason = "why"
-    desplace = "where"
-    desemotion = "feel"
-    desaction = "how"
-    descommand = "command"
-    desbridge = "bridge"
-    desconcept = "concept"
     sentstruc = 0
+    line = ""
+    ucount = 0
+    wordcountstat = 0
+    if interactive:
+        print()
 
-    while 0 == 0:
-        line = ""
-        ucount = 0
-        wordcountstat = 0
-        try:
-            with open(knowledgebase, "rb") as fh:
-                answerstring = fh.read().decode("latin-1")
-        except OSError:
-            pass
+    answerstring = session_kb
+    if os.path.isfile(knowledgebase):
+        with open(knowledgebase, "rb") as fh:
+            answerstring = fh.read().decode("latin-1")
 
-        if sweep == 0:
-            speedprocessing = 0
+    if sweep == 0:
+        speedprocessing = 0
+        if interactive:
+            userinput = input("USER: ")
+            if userinput.strip().lower() in ("quit", "exit", "menu"):
+                raise BackToMenu()
 
-        if userinput == "load file":
-            if Argc == 1:
-                userinputall = loadfile("test.txt")
-            if Argc > 1:
-                userinputall = loadfile(Argv)
-            speedprocessing = 1
-            userinput = ""
-            sweep = 1
+    if userinput == "load file":
+        userinputall = loadfile(LOADFILE_PATH)
+        speedprocessing = 1
+        userinput = ""
+        sweep = 1
 
-        if userinput == "open new window":
-            # system("start main.exe")
-            pass
+    if userinput == "open new window":
+        run_shell("start main.exe")
 
-        if userinput == "show answerstring":
-            userinput = ""
-            print(" Z=" + answerstring, end="")
+    if userinput == "show answerstring":
+        userinput = ""
+        print(answerstring, end="")
 
-        if userinput == "show thought":
-            userinput = ""
-            print(thought[0], end="")
-        if userinput == "show structure":
-            userinput = ""
-            print(structure[0], end="")
+    if userinput == "show thought":
+        userinput = ""
+        print(thought[0], end="")
+    if userinput == "show structure":
+        userinput = ""
+        print(structure[0], end="")
 
-        if speedprocessing == 1:
-            answerstring = ""
+    if speedprocessing == 1:
+        answerstring = ""
 
-        if userinput == "load insight":
-            userinput = ""
-            for linei in read_lines("ginsight.txt"):
-                userinput = "you want " + linei
-                userinput = userinput + " :"
-                answerstring += processlanguage(userinput)
-            for linei in read_lines("self.txt"):
-                userinput = "you are " + linei
-                userinput = userinput + " :"
-                answerstring += processlanguage(userinput)
-
-        if userinput == "switch mode":
-            userinput = ""
-            # (as in the original, the two ifs cancel each other out)
-            if trade == 0:
-                trade = 1
-            if trade == 1:
-                trade = 0
-
-        if userinput == "E41A":
-            userinput = ""
-            while 0 == 0:
-                print("ERROR")
-
-        if userinput == "E41B":
-            userinput = ""
-            userinputall = ""
-            answerstring = ""
-            globals()["textneeded"] = ""
-            globals()["lineneeded"] = ""
-            notes = ""
-            line = ""
-            globals()["word"] = ""
-
-        if userinput == "trade?":
-            userinput = ""
-            temp1 = 0.0
-            combine = int(buy + sell)
-            divbuy = buy / combine if combine else 0.0
-            divsell = sell / combine if combine else 0.0
-            divbuy *= 100
-            divsell *= 100
-            if divbuy > 50:
-                print("ACTION: BUY, ", end="")
-                temp1 = divbuy - 50
-            if divsell > 50:
-                print("ACTION: SELL, ", end="")
-                temp1 = divsell - 50
-            if divbuy == 50:
-                print("ACTION: NOTHING, ", end="")
-                temp1 = divbuy - 50
-
-            print("Probability of Success: ", end="")
-            if temp1 >= 0 and temp1 < 2:
-                print("CRITICALLY LOW")
-            if temp1 <= 3 and temp1 > 2:
-                print("LOW")
-            if temp1 <= 4 and temp1 > 3:
-                print("MEDIUM")
-            if temp1 <= 5 and temp1 > 4:
-                print("HIGH")
-            if temp1 <= 6 and temp1 > 5:
-                print("VERY HIGH")
-            if temp1 > 6:
-                print("Guaranteed ")
-
-            print("Points: ", temp1)
-            print("Buy markers: ", buy, " Sell markers: ", sell)
-
-        if userinput == "found?":
-            userinput = ""
-            print("number found: ", found)
-
-        if userinput == "show notes":
-            userinput = ""
-            print(notes, end="")
-            m += 1
-
-        if userinput == "process info":
-            # system("start main \"web.txt\"")
-            pass
-
-        if userinput == "show userinputall":
-            userinput = ""
-            print(userinputall, end="")
-            m += 1
-
-        if userinput == "show reasonchain":
-            print(chainreason, end="")
-
-        if userinput == "think":
-            structposA = 0
-            thoughtposA = 0
-            x = 0
-            y = 0
-            structurestr = structure[x]
-            thoughtstr = thought[y]
-            o = 0
-            while o < 10:
-                structposB = structurestr.find(" ", structposA)
-                print("STRUCT:", structposA, structposB, end="")
-                structposA = structposB + 1
-
-                thoughtposB = thoughtstr.find(" ", thoughtposA)
-                print("  PROCESS:", thoughtposA, thoughtposB)
-                thoughtposA = thoughtposB + 1
-                o += 1
-
-        if userinput == "open auto window":
-            # system("main \"auto.txt\"")
-            pass
-
-        if userinput == "save notes":
-            userinput = ""
-            with open("notes.txt", "w") as textfile0:
-                textfile0.write(notes)
-
-        if userinput == "process notes":
-            userinput = ""
-            trade = 0
-            sweep = 1
-            procnote = 1
-
-        if sweep == 1:
-            if procnote == 0:
-                pass
-            if procnote == 1:
-                userinputall = notes + ":"
-
-            if procnote == 0:
-                b = userinputall.find(".", a + 2)
-                userinput = substr(userinputall, a, b - a + 1)
-                a = userinputall.find(".", a + 1)
-
-            if procnote == 1:
-                b = userinputall.find(":", a + 2)
-                userinput = substr(userinputall, a, b - a + 1)
-                a = userinputall.find(":", a + 1)
-
-        if a == len(userinputall) - 1:
-            sweep = 0
-            a = 0
-            b = 0
-
-        if procnote == 0:
-            remdot = userinput.find(".")
-            if remdot == 0:
-                userinput = userinput[1:]
-            remdot = userinput.find(".")
-            if remdot > 0:
-                userinput = userinput[:-1]
-        if procnote == 1:
-            remdot = userinput.find(":")
-            if remdot == 0:
-                # (original wrote answerstring to an unopened ofstream: no-op)
-                userinput = userinput[1:]
-            remdot = userinput.find(":")
-            if remdot > 0:
-                userinput = userinput[:-1]
-
-        question = userinput.find("?")
-        if question > -1:
-            userinput = userinput[:question]
-            userinput += " ?"
-        if procnote == 0:
-            userinput = userinput + " :"
-
-        if sentstruc == 0:
+    if userinput == "load insight":
+        userinput = ""
+        for linei in read_lines("ginsight.txt"):
+            userinput = "you want " + linei + " :"
             answerstring += processlanguage(userinput)
+        for linei in read_lines("self.txt"):
+            userinput = "you are " + linei + " :"
+            answerstring += processlanguage(userinput)
+
+    if userinput == "switch mode":
+        userinput = ""
+        # (as in the original, the two ifs cancel each other out)
         if trade == 0:
-            if sentstruc == 0:
-                theanswerready = processresponsealgbraic(answerstring, userinput)
-        if question == -1:
-            if trade != 1:
-                # print("[" + str(anscount) + " out of " + str(ucount) + " words in sentence recognised]")
-                pass
-        if fail == 1:
-            # theanswerready = processresponselogic()
-            pass
+            trade = 1
+        if trade == 1:
+            trade = 0
 
-        numresp = leading_int(theanswerready)
-        chainreason += theanswerready
-        if userinput.find("why") > -1:
-            chainreason += "~"
-        elif userinput.find("what") > -1:
-            chainreason += "^"
-        elif userinput.find("when") > -1:
-            chainreason += "&"
-        elif userinput.find("how") > -1:
-            chainreason += "*"
-        elif userinput.find("describe") > -1:
-            chainreason += "+"
-        elif userinput.find("who") > -1:
-            chainreason += "#"
-        # chainrecogniseend:
+    if userinput == "E41A":
+        userinput = ""
+        while 0 == 0:           # original behaviour: endless ERROR (Ctrl+C to stop)
+            print("ERROR")
 
-        if numresp < 200 and numresp > 0:
-            x = 1
-            for respline in read_lines("response.txt"):
-                if x == numresp:
-                    print(respline)
-                x += 1
+    if userinput == "E41B":
+        userinput = ""
+        userinputall = ""
+        answerstring = ""
+        textneeded = ""
+        lineneeded = ""
+        notes = ""
+        line = ""
 
-        if speedprocessing == 1:
-            with open(knowledgebase, "a") as textfile4:
-                textfile4.write(answerstring)
-        n += 1
+    if userinput == "trade?":
+        userinput = ""
+        temp1 = 0.0
+        combine = int(buy + sell)
+        divbuy = buy / combine if combine else 0.0
+        divsell = sell / combine if combine else 0.0
+        divbuy *= 100
+        divsell *= 100
+        if divbuy > 50:
+            print("ACTION: BUY, ", end="")
+            temp1 = divbuy - 50
+        if divsell > 50:
+            print("ACTION: SELL, ", end="")
+            temp1 = divsell - 50
+        if divbuy == 50:
+            print("ACTION: NOTHING, ", end="")
+            temp1 = divbuy - 50
 
-        if points < 0:
-            # warning2(points)
-            pass
+        print("Probability of Success: ", end="")
+        if temp1 >= 0 and temp1 < 2:
+            print("CRITICALLY LOW")
+        if temp1 <= 3 and temp1 > 2:
+            print("LOW")
+        if temp1 <= 4 and temp1 > 3:
+            print("MEDIUM")
+        if temp1 <= 5 and temp1 > 4:
+            print("HIGH")
+        if temp1 <= 6 and temp1 > 5:
+            print("VERY HIGH")
+        if temp1 > 6:
+            print("Guaranteed ")
 
-        theanswerready2 = synthanswer
-        # self question descriptor algo or programmable inference
-        # who is in the x? describe the x? what drinks are in the x? command
-        # object to self / self to object / self to idea / idea to self
-        # des to self / self to des
-        if userinput.find(descommand) != -1:
-            for line in read_lines("objects.txt"):
-                pos = userinput.find(line)
-                if pos != -1:
-                    objects = line
+        print("Points: ", temp1)
+        print("Buy markers: ", buy, " Sell markers: ", sell)
 
-            synthcom = theanswerready + " " + objects
-            # system(synthcom)
-            print("\n" + synthcom)
+    if userinput == "found?":
+        userinput = ""
+        print("number found: ", found)
 
-        return theanswerready
+    if userinput == "show notes":
+        userinput = ""
+        print(notes, end="")
+        m += 1
+
+    if userinput == "process info":
+        run_shell('start main "web.txt"')
+
+    if userinput == "show userinputall":
+        userinput = ""
+        print(userinputall, end="")
+        m += 1
+
+    if userinput == "show reasonchain":
+        print(chainreason, end="")
+
+    if userinput == "think":
+        structposA = 0
+        thoughtposA = 0
+        structurestr = structure[0]
+        thoughtstr = thought[0]
+        o = 0
+        while o < 10:
+            structposB = structurestr.find(" ", structposA)
+            print("STRUCT:", structposA, structposB, end="")
+            structposA = structposB + 1
+            thoughtposB = thoughtstr.find(" ", thoughtposA)
+            print("  PROCESS:", thoughtposA, thoughtposB)
+            thoughtposA = thoughtposB + 1
+            o += 1
+
+    if userinput == "open auto window":
+        run_shell('main "auto.txt"')
+
+    if userinput == "save notes":
+        userinput = ""
+        with open("notes.txt", "w") as textfile0:
+            textfile0.write(notes)
+
+    if userinput == "process notes":
+        userinput = ""
+        trade = 0
+        sweep = 1
+        procnote = 1
+
+    if sweep == 1:
+        if procnote == 1:
+            userinputall = notes + ":"
+
+        if procnote == 0:
+            b = userinputall.find(".", a + 2)
+            userinput = substr(userinputall, a, b - a + 1)
+            a = userinputall.find(".", a + 1)
+
+        if procnote == 1:
+            b = userinputall.find(":", a + 2)
+            userinput = substr(userinputall, a, b - a + 1)
+            a = userinputall.find(":", a + 1)
+
+    if a == len(userinputall) - 1:
+        sweep = 0
+        a = 0
+        b = 0
+
+    if procnote == 0:
+        remdot = userinput.find(".")
+        if remdot == 0:
+            userinput = userinput[1:]
+        remdot = userinput.find(".")
+        if remdot > 0:
+            userinput = userinput[:-1]
+    if procnote == 1:
+        remdot = userinput.find(":")
+        if remdot == 0:
+            userinput = userinput[1:]
+        remdot = userinput.find(":")
+        if remdot > 0:
+            userinput = userinput[:-1]
+
+    question = userinput.find("?")
+    if question > -1:
+        userinput = userinput[:question]
+        userinput += " ?"
+    if procnote == 0:
+        userinput = userinput + " :"
+
+    if sentstruc == 0:
+        answerstring += processlanguage(userinput)
+    if trade == 0:
+        if sentstruc == 0:
+            theanswerready = processresponsealgbraic(answerstring, userinput)
+
+    numresp = leading_int(theanswerready)
+    chainreason += theanswerready
+    if userinput.find("why") > -1:
+        chainreason += "~"
+    elif userinput.find("what") > -1:
+        chainreason += "^"
+    elif userinput.find("when") > -1:
+        chainreason += "&"
+    elif userinput.find("how") > -1:
+        chainreason += "*"
+    elif userinput.find("describe") > -1:
+        chainreason += "+"
+    elif userinput.find("who") > -1:
+        chainreason += "#"
+
+    if numresp < 200 and numresp > 0:
+        x = 1
+        for respline in read_lines("response.txt"):
+            if x == numresp:
+                print(respline)
+            x += 1
+
+    if speedprocessing == 1:
+        with open(knowledgebase, "a") as textfile4:
+            textfile4.write(answerstring)
+
+    if interactive:
+        with open("NLP.txt", "w") as NLP:
+            NLP.write(theanswerready)
+        print(userinput, end="")
+
+    if userinput.find(DES["command"]) != -1:
+        for line in read_lines(LEX["object"]):
+            pos = userinput.find(line)
+            if pos != -1:
+                objects = line
+        synthcom = theanswerready + " " + objects
+        print("\n" + synthcom)
+        if interactive:
+            run_shell(synthcom)      # original: system(synthcom)
+
+    if interactive:
+        print("[" + theanswerready + "]", end="")
+
+    session_kb = answerstring
+    return theanswerready
 
 
-def main():
-    global Argc, Argv, filename, logout, Sout
+# ----------------------------------------------------------------------------
+# Modes
+# ----------------------------------------------------------------------------
+def learn_mode(kb=KNOWLEDGEBASE):
+    """learn.cpp  -  SynthReason v0.2g interactive loop."""
+    global MATCH_MODE
+    MATCH_MODE = "line"
+    print("the developer is not responsible for the user's intent using this program.")
+    print("SynthReason.  v0.8a   (type 'menu' to go back)")
+    print("Commands: load file, show answerstring, show notes, trade?, found?, "
+          "process notes, save notes, ...")
+    try:
+        while True:
+            processKnowledge("", kb, interactive=True)
+    except (BackToMenu, EOFError, KeyboardInterrupt):
+        print()
 
-    count1 = 0
-    if os.name == "nt":
-        os.system("color 79")
-    presentthought = ""
-    AIControlLogic = "I II III O"
-    AIControlLogicDefinitions = ":First Person:Second Person:world:cycle repeat:"
-    AIEthics = "DHH DHM"
-    AIEthicsDefinitions = ":Do not harm any human:Do not harm myself:do not make weapons:"
-    AIMandates = "EP CD ISL"
-    AIMandatesDefinitions = "{End poverty}{Cure disease}{Improve standard of living}{learn}"
-    # ($universe/system) Control logic (causality, space, time, protocol etc..)
-    # one(self) person sim, Two(self included) person sim, world sim, cycle.
-    # AI ethics incorporates decision retardants when any set ethic is violated.
-    # AI mandates ensure the artificial intelligence has at least one purpose.
-    phase = 0
-    Argc = len(sys.argv)
-    if Argc > 1:
-        Argv = sys.argv[1]
 
-    # ----------------------------Cognition-------------------------------------
-    # once cognition stage is reached, free access to the program components is
-    # allowed logically, componentify basic code for easy access (TODO much later...)
-    # 3 mechanism systems // consciousness ~opcode processing
-    # 5 programmable distinction systems
-    # 4 recognition systems
-    # 2 logic generation
-    # reference body (psychology for starters)
-    # (the large commented-out "Begin:" cycle from the original is omitted)
+def teach(path=None, kb=KNOWLEDGEBASE):
+    """The 'load file' command as a one-shot: read a text file sentence by
+    sentence and append the tagged result to the knowledge base."""
+    global MATCH_MODE, LOADFILE_PATH, sweep, speedprocessing
+    path = path or LOADFILE_PATH
+    if not os.path.isfile(path):
+        print("Cannot find '%s'. Put some plain text in it (sentences ending "
+              "in '.') and try again." % path)
+        return
+    if not any(l.strip() for f in lexicon_files() for l in read_lines(f)):
+        print("Warning: all word files are empty, so nothing will be tagged. "
+              "Fill names.txt, verbs.txt, etc. first (see 'status').")
+    MATCH_MODE = "line"
+    LOADFILE_PATH = path
+    before = os.path.getsize(kb) if os.path.isfile(kb) else 0
+    sweep = 0
+    sentences = 1
+    processKnowledge("load file", kb)
+    while sweep == 1:
+        processKnowledge("", kb)
+        sentences += 1
+    speedprocessing = 0
+    after = os.path.getsize(kb) if os.path.isfile(kb) else 0
+    print("Learned from %d sentence(s); %s grew by %d bytes."
+          % (sentences, kb, after - before))
 
+
+def run_mode(kb=None):
+    """main.cpp  -  SynthReason 0.9N (BiConsciousSymmetricalProcessor)."""
+    global MATCH_MODE, Sout
+
+    MATCH_MODE = "substring"
+    ent = 7
     print("SynthReason 0.9N (BiConsciousSymmetricalProcessor)- Beta - "
           "George Wagenknecht - Jan 2017")
-    processToolprev = ""
-    Config()
-    word1 = ""
+    try:
+        processTool = kb or (input("\nInitilise KnowledgeBase [%s]:" % KNOWLEDGEBASE).strip()
+                             or KNOWLEDGEBASE)
+        if not os.path.isfile(processTool) or os.path.getsize(processTool) == 0:
+            print("Note: '%s' is missing or empty - 0.9N has nothing to think "
+                  "with. Use 'Teach' first." % processTool)
+        word1 = ""
+        # ($universe/system) control logic / ethics / mandates strings of the
+        # original are only referenced from commented-out code.
 
-    AGE = 0
-    ent = 5
-
-    processObject = ""
-    key = ""
-    processTool = ""
-    processTool = input("\nInitilise KnowledgeBase:")
-
-    while 0 == 0:
-        joined = ""
-        # logic system basic representation // basic story
-        processObject = ""
-        key = ""
-
-        ent = 7
-        filename = processTool + "-" + key + "?.txt"
-
-        with open("logout.txt", "a") as logout:
-            logout.write("Initiating Lexeme Processor:\n")
-
-        processToolprev = processTool
-        with open("status.txt", "w"):
-            pass
-        CC = ""
-
-        s1 = 0
-        s2 = 0
-        C = ""
-        Core = ",mind,RDB2,thought,subconscious,feedback,stimulus,live,explore,space,expanse,conscious,"
-
-        desstructarray = ["describe", "how", "when", "who", "what", "count", "why",
-                          "where", "feel", "command", "bridge", "game", "concept"]
-        SentStruct = ["desadj", "desadjp", "desadv", "desadvtime", "desprep",
-                      "desqualities", "desverb"]
-        structarray = ["desverb", "describe", "desqualities"]
-        J = 0
-        Core = ",conscious,"
-        newrequest = ""
-        Q = 0
-        loop = 0
-
-        key = input("\nContext:")
-        Logicthinkdescribe = "describe " + key + "?"
         while 0 == 0:
-
-            if processTool == "thought":
-                aa = ""
-                for a_ in read_lines("RDB2"):
-                    aa += a_
-                with open("memory", "a") as qq:
-                    qq.write(aa)
-                with open("RDB2", "w"):
-                    pass
-
-            # CORE PROTECTION
-            # ------------------------------------------------------------------
-            s1 = Core.find(",", s1)
-            s2 = Core.find(",", s1 + 1)
-            # processTool = Core[s1 + 1:s2]
-
             with open("logout.txt", "a") as logout:
-                logout.write(processToolprev + " ==> " + processTool + "\n")
-            filename = processTool + "-" + key + "?.txt"
-
-            xoxo = ""
-            newrequest += xoxo + " "
-            xoxo = structarray[J]
-            J += 1
-            if J == 2:
-                J = 0
-
-            Logicthinkdescribe = xoxo + " " + key + "?"
-
-            with open("logout.txt", "a") as logout:
-                logout.write(Logicthinkdescribe + " " + processTool + "\n")
-
-            processKnowledge(Logicthinkdescribe, processTool)
-            start = 0
-            num = random.randint(1, ent)
-            length1 = 0
-            length2 = 0
-            line = Sout
-            while num != ent // 2:
-                num = random.randint(1, ent)
-                test = line.find(">", start + 1)
-                test1 = line.find(">", test + 1)
-                if test1 == -1:
-                    start = 0
-
-                length1 = line.find(">", start + 1)
-                length2 = line.find(" ", length1 + 1)
-
-                word1 = substr(line, length1 + 1, length2 - length1 - 1)
-                D = E = F = ""
-                start = length2
-                if start < 0:       # keep find() positions sane (C++ npos wrap)
-                    start = 0
-
-            key = word1
-
-            Q = 1
-            print(word1 + " ", end="")
-            # ------------------------------------------------------------------
-
-            if CC != NE and processTool == "conscious" and processTool != "RDB2":
-                # print("\nStability error!")
+                logout.write("Initiating Lexeme Processor:\n")
+            processToolprev = processTool
+            with open("status.txt", "w"):
                 pass
+            CC = ""
+            # description / verb / qualities cycle (original structarray)
+            structarray = [DES_EXTRA["verb"], DES["description"], DES_EXTRA["qualities"]]
+            J = 0
+            Core = ",conscious,"
+            s1 = 0
+            s2 = 0
+            loop = 0
 
-            if processTool == "conscious":
-                CC = ""
+            key = input("\nContext (blank or 'menu' = back):").strip()
+            if key.lower() in ("", "menu", "quit", "exit"):
+                return
 
-            if loop == 6:
-                break
-            loop += 1
+            while 0 == 0:
+                if processTool == "thought":
+                    aa = "".join(read_lines("RDB2"))
+                    with open("memory", "a") as qq:
+                        qq.write(aa)
+                    with open("RDB2", "w"):
+                        pass
+
+                # CORE PROTECTION
+                s1 = Core.find(",", s1)
+                s2 = Core.find(",", s1 + 1)
+
+                with open("logout.txt", "a") as logout:
+                    logout.write(processToolprev + " ==> " + processTool + "\n")
+
+                xoxo = structarray[J]
+                J += 1
+                if J == 2:
+                    J = 0
+
+                Logicthinkdescribe = xoxo + " " + key + "?"
+
+                with open("logout.txt", "a") as logout:
+                    logout.write(Logicthinkdescribe + " " + processTool + "\n")
+
+                processKnowledge(Logicthinkdescribe, processTool)
+                start = 0
+                num = random.randint(1, ent)
+                line = Sout
+                while num != ent // 2:
+                    num = random.randint(1, ent)
+                    test = line.find(">", start + 1)
+                    test1 = line.find(">", test + 1)
+                    if test1 == -1:
+                        start = 0
+
+                    length1 = line.find(">", start + 1)
+                    length2 = line.find(" ", length1 + 1)
+
+                    word1 = substr(line, length1 + 1, length2 - length1 - 1)
+                    start = length2
+                    if start < 0:       # keep find() positions sane (C++ npos wrap)
+                        start = 0
+
+                key = word1
+                print((word1 if word1 else "(nothing learned yet)") + " ", end="", flush=True)
+
+                if processTool == "conscious":
+                    CC = ""
+
+                if loop == 6:
+                    break
+                loop += 1
+    except (EOFError, KeyboardInterrupt):
+        print()
 
 
-# free will
+# ----------------------------------------------------------------------------
+# Menu
+# ----------------------------------------------------------------------------
+def menu():
+    while True:
+        print("""
+SynthReason - all in one
+  1  Configure descriptors & word files   (configurator)
+  2  Learn / chat                         (v0.2g)
+  3  Teach from a text file               (builds knowledgebase.txt)
+  4  Run SynthReason 0.9N
+  5  Status / check data files
+  0  Quit""")
+        try:
+            choice = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if choice == "1":
+            Configurator()
+        elif choice == "2":
+            learn_mode()
+        elif choice == "3":
+            try:
+                p = input("Text file to learn from [%s]:" % LOADFILE_PATH).strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                continue
+            teach(p or None)
+        elif choice == "4":
+            run_mode()
+        elif choice == "5":
+            status()
+        elif choice in ("0", "q", "quit", "exit"):
+            return
+
+
+def main(argv=None):
+    global ALLOW_SHELL, LOADFILE_PATH, KNOWLEDGEBASE
+    ap = argparse.ArgumentParser(description="SynthReason all-in-one")
+    ap.add_argument("command", nargs="?",
+                    choices=["configure", "learn", "teach", "run", "status"])
+    ap.add_argument("file", nargs="?", help="text file (teach) or knowledge base (run)")
+    ap.add_argument("--allow-shell", action="store_true",
+                    help="allow commands to be run through the OS shell")
+    args = ap.parse_args(argv)
+    ALLOW_SHELL = args.allow_shell
+
+    if not Config():
+        print("No %s yet - using default descriptors (choose 1 to configure)." % CONFIG_FILE)
+    ensure_data_files()
+
+    if args.command == "configure":
+        Configurator()
+    elif args.command == "learn":
+        learn_mode()
+    elif args.command == "teach":
+        teach(args.file)
+    elif args.command == "run":
+        run_mode(args.file)
+    elif args.command == "status":
+        status()
+    else:
+        menu()
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
